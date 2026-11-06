@@ -10,6 +10,7 @@ Commands:
   /clear_session – Reset credentials and active session
 """
 
+import html
 import logging
 import os
 import shutil
@@ -211,8 +212,8 @@ async def check_offer(update: Update,
         )
     except GoogleAutomationError as exc:
         await update.message.reply_text(
-            f"❌ *Google Automation Block:* {exc}",
-            parse_mode="Markdown",
+            f"❌ <b>Google Automation Block:</b> {html.escape(str(exc))}",
+            parse_mode="HTML",
         )
         return
     except Exception as exc:
@@ -223,11 +224,11 @@ async def check_offer(update: Update,
     if offer_link:
         session["offer_link"] = offer_link
         await update.message.reply_text(
-            "🎉 *Gemini / Google One Offer Found!*\n\n"
+            "🎉 <b>Gemini / Google One Offer Found!</b>\n\n"
             "Claim your promotional link below:\n\n"
-            f"🔗 {offer_link}\n\n"
-            "_Use /get\\_link to retrieve this link again._",
-            parse_mode="Markdown",
+            f"🔗 {html.escape(offer_link)}\n\n"
+            "<i>Use /get_link to retrieve this link again.</i>",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
@@ -248,14 +249,13 @@ async def get_link(update: Update,
 
     if link:
         await update.message.reply_text(
-            f"🔗 *Last captured offer link:*\n\n{link}",
-            parse_mode="Markdown",
+            f"🔗 <b>Last captured offer link:</b>\n\n{html.escape(link)}",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
             "ℹ️ No offer link has been captured yet. "
-            "Use /check\\_offer to search for available offers.",
-            parse_mode="Markdown",
+            "Use /check_offer to search for available offers."
         )
 
 
@@ -318,6 +318,18 @@ async def clear_session(update: Update,
     await update.message.reply_text("🧹 Session cleared. All stored credentials and profiles were removed.")
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and inform the user if possible."""
+    logger.error("Exception while handling an update: %s", context.error, exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ An unexpected error occurred while processing your request. Please try again."
+            )
+        except Exception:
+            pass
+
+
 # ── Application setup ─────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -330,6 +342,7 @@ def main() -> None:
         sys.exit(1)
 
     app = Application.builder().token(token).build()
+    app.add_error_handler(error_handler)
 
     # /login conversation handler with 2FA TOTP support
     login_conv = ConversationHandler(
