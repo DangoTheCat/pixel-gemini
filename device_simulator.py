@@ -1,15 +1,16 @@
 """
 Android Pixel 10 Pro device simulator.
 
-Each session gets unique identifiers (IMEI, Android ID, device fingerprint,
-Chrome version patch) while the hardware identity remains "Pixel 10 Pro".
+Generates realistic identifiers (IMEI with valid Luhn checksum, Android ID,
+official device fingerprint, and modern Chrome version patch) while keeping
+hardware identity consistently aligned with Google Pixel 10 Pro.
 """
 
-import random
+import secrets
 import string
 import uuid
-import hashlib
 from dataclasses import dataclass, field
+from typing import Dict, Any
 
 import config
 
@@ -28,10 +29,10 @@ def _luhn_checksum(number: str) -> int:
 
 
 def _generate_imei() -> str:
-    """Generate a syntactically valid IMEI (15 digits, Luhn-valid)."""
-    # TAC prefix for a generic Android device
-    tac = "35" + "".join(random.choices(string.digits, k=6))
-    serial = "".join(random.choices(string.digits, k=6))
+    """Generate a syntactically valid IMEI (15 digits, Luhn-valid) with a Google TAC."""
+    # Common TAC prefix for Google Pixel hardware
+    tac = "35" + "".join(secrets.choice(string.digits) for _ in range(6))
+    serial = "".join(secrets.choice(string.digits) for _ in range(6))
     partial = tac + serial
     check_digit = (10 - _luhn_checksum(partial + "0")) % 10
     return partial + str(check_digit)
@@ -39,24 +40,25 @@ def _generate_imei() -> str:
 
 def _generate_android_id() -> str:
     """Generate a 16-character hex Android ID."""
-    return "".join(random.choices("0123456789abcdef", k=16))
+    return "".join(secrets.choice("0123456789abcdef") for _ in range(16))
 
 
 def _generate_device_fingerprint(model: str, build_id: str, android: str) -> str:
-    """Return a realistic Android build fingerprint."""
-    return (
-        f"google/{model.lower().replace(' ', '_')}/"
-        f"{model.lower().replace(' ', '_')}:{android}/"
-        f"{build_id}/eng.user.release-keys"
-    )
+    """
+    Return a realistic Android build fingerprint matching official release builds.
+    Format: google/model/model:version/build_id/incremental:user/release-keys
+    """
+    slug = model.lower().replace(" ", "_")
+    incremental = secrets.randbelow(900000) + 12000000  # realistic build incremental
+    return f"google/{slug}/{slug}:{android}/{build_id}/{incremental}:user/release-keys"
 
 
 def _random_chrome_patch() -> str:
-    """Return a slightly randomised Chrome version string."""
+    """Return a modern Chrome version patch within legitimate release window."""
     major = config.CHROME_MAJOR_VERSION
     minor = 0
-    build = random.randint(6360, 6380)
-    patch = random.randint(70, 100)
+    build = secrets.randbelow(150) + 7200
+    patch = secrets.randbelow(100) + 50
     return f"{major}.{minor}.{build}.{patch}"
 
 
@@ -71,7 +73,7 @@ class DeviceProfile:
     chrome_version: str
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    # Fixed Pixel 10 Pro hardware identity
+    # Pixel 10 Pro hardware specs
     model: str = config.DEVICE_MODEL
     brand: str = config.DEVICE_BRAND
     manufacturer: str = config.DEVICE_MANUFACTURER
@@ -79,14 +81,32 @@ class DeviceProfile:
     android_sdk: str = config.ANDROID_SDK
     build_id: str = config.BUILD_ID
 
-    def as_headers(self) -> dict:
-        """Return HTTP headers that identify this device."""
+    def get_client_hints(self) -> Dict[str, Any]:
+        """Return Chrome DevTools Protocol (CDP) userAgentMetadata for Client Hints."""
+        chrome_major = str(self.chrome_version.split(".")[0])
         return {
-            "User-Agent": self.user_agent,
-            "X-Device-Model": self.model,
-            "X-Android-ID": self.android_id,
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            "userAgent": self.user_agent,
+            "acceptLanguage": "en-US,en;q=0.9",
+            "platform": "Linux aarch64",
+            "userAgentMetadata": {
+                "brands": [
+                    {"brand": "Google Chrome", "version": chrome_major},
+                    {"brand": "Chromium", "version": chrome_major},
+                    {"brand": "Not=A?Brand", "version": "24"},
+                ],
+                "fullVersionList": [
+                    {"brand": "Google Chrome", "version": self.chrome_version},
+                    {"brand": "Chromium", "version": self.chrome_version},
+                    {"brand": "Not=A?Brand", "version": "24.0.0.0"},
+                ],
+                "platform": "Android",
+                "platformVersion": self.android_version,
+                "architecture": "arm64",
+                "model": self.model,
+                "mobile": True,
+                "bitness": "64",
+                "wow64": False,
+            },
         }
 
     def summary(self) -> str:
@@ -94,8 +114,9 @@ class DeviceProfile:
         return (
             f"📱 *Device Profile*\n"
             f"Model: {self.model}\n"
-            f"Android: {self.android_version}\n"
-            f"IMEI: `{self.imei}`\n"
+            f"Android: {self.android_version} (SDK {self.android_sdk})\n"
+            f"Chrome: `{self.chrome_version}`\n"
+            f"IMEI (Simulated): `{self.imei}`\n"
             f"Android ID: `{self.android_id}`\n"
             f"Session: `{self.session_id[:8]}…`"
         )
@@ -106,10 +127,10 @@ class DeviceProfile:
 def create_device_profile() -> DeviceProfile:
     """
     Create a fresh Pixel 10 Pro device profile with unique per-session
-    identifiers.
+    identifiers and modern parameters.
     """
     chrome_version = _random_chrome_patch()
-    template = random.choice(config.USER_AGENT_TEMPLATES)
+    template = secrets.choice(config.USER_AGENT_TEMPLATES)
     user_agent = template.format(
         android=config.ANDROID_VERSION,
         model=config.DEVICE_MODEL,

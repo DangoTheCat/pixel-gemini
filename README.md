@@ -1,10 +1,29 @@
 # pixel-gemini
 
-**Pixel 10 Pro Google One Gemini Offer Bot – Telegram Interface**
+**Pixel 10 Pro Google One Gemini Automation & Telegram Bot**
 
-A Replit-hosted Telegram bot that simulates a Google Pixel 10 Pro (Android 16)
-device, logs into a user-supplied Gmail account, and retrieves the
-**12-month free Gemini Pro** activation link from Google One.
+A Telegram bot and automation framework that simulates a Google Pixel 10 Pro (Android 16) device using Chrome DevTools Protocol (CDP) Client Hints, handles Google Account authentication (including 2FA TOTP), and scans Google One for promotional offers.
+
+---
+
+## What's New & Upgraded (Community Synthesis)
+
+This repository synthesizes the best working techniques and fixes from community forks (`51hcie`, `yhw5231`, `ndnhatvien`):
+
+1. **CDP Client Hints Emulation (`Sec-CH-UA-Model`)**:
+   - Injected real high-entropy values matching Google Pixel 10 Pro via Chrome DevTools Protocol.
+   - Removed dead code in headers and aligned viewport (`427×952 @ 3.0 DPR`).
+2. **Anti-Fingerprint Stealth Script**:
+   - Overrides `navigator.webdriver` to `undefined`, sets mobile `maxTouchPoints = 5`, `platform = Linux armv8l`, and realistic hardware concurrency.
+   - Removed embedded WebView User-Agent templates that triggered Google's *"Insecure browser"* block.
+3. **Two-Factor Authentication (2FA TOTP)**:
+   - Added automatic 6-digit OTP code generation via `pyotp` when provided with a Google Authenticator Secret Key.
+4. **Proxy & Datacenter IP Mitigation**:
+   - Added `PROXY_URL` support to route Selenium traffic through residential/mobile proxies.
+5. **Session Profile Persistence**:
+   - Optional `--user-data-dir` caching to preserve cookies and avoid repeated login challenges.
+6. **Modernized Toolchain**:
+   - Updated dependencies (Selenium 4.25+, python-telegram-bot, pyotp; removed obsolete `webdriver-manager`).
 
 ---
 
@@ -12,125 +31,63 @@ device, logs into a user-supplied Gmail account, and retrieves the
 
 ```
 pixel-gemini/
-├── main.py               # Telegram bot entry point
-├── device_simulator.py   # Android Pixel 10 Pro device simulation
-├── google_automation.py  # Google One login and offer detection
-├── config.py             # Configuration and constants
+├── main.py               # Telegram bot entry point & conversation handlers
+├── device_simulator.py   # Pixel 10 Pro specs, Luhn IMEI generator, CDP hints
+├── google_automation.py  # Selenium CDP stealth driver, 2FA handler & offer scanner
+├── config.py             # Configuration, URLs, and device constants
 ├── requirements.txt      # Python dependencies
-└── README.md             # This file
+└── README.md             # Documentation
 ```
 
 ---
 
-## Features
+## Features & Commands
 
-| Feature | Details |
+| Command | Description |
 |---|---|
-| 📱 Device simulation | Pixel 10 Pro (Android 16) with unique IMEI, Android ID, and user-agent per session |
-| 🤖 Telegram bot | `/start`, `/login`, `/check_offer`, `/get_link`, `/status` commands |
-| 🔐 Gmail login | Selenium-based Google account authentication |
-| 💳 Offer detection | Scans Google One for the 12-month Gemini Pro offer and extracts the activation link |
-| 🔄 Session management | In-memory per-user sessions; passwords deleted from chat on capture |
+| `/start` | Show welcome message and overview |
+| `/login` | 3-step credential setup (Email → Password → Optional 2FA Secret Key) |
+| `/check_offer` | Launch Pixel 10 Pro emulation and scan Google One for offers |
+| `/get_link` | Retrieve the last discovered offer link |
+| `/status` | View current session state, 2FA status, and simulated device profile |
+| `/clear_session` | Delete cached credentials and Chrome profile |
 
 ---
 
-## Setup on Replit
+## Setup & Running
 
-### 1. Fork / import this repository
-
-Open [Replit](https://replit.com) and create a new Repl from this GitHub repo.
-
-### 2. Create a Telegram Bot
-
-1. Open Telegram and search for **@BotFather**.
-2. Send `/newbot` and follow the prompts.
-3. Copy the API token you receive (looks like `123456:ABC-DEF…`).
-
-### 3. Set the environment variable
-
-In the Replit sidebar click **Secrets** (🔒) and add:
-
-| Key | Value |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Your token from BotFather |
-
-### 4. Install dependencies
+### 1. Clone & create virtual environment
 
 ```bash
+git clone https://github.com/DangoTheCat/pixel-gemini.git
+cd pixel-gemini
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Replit runs this automatically on first start if you use a `pyproject.toml`
-or if the Run button is configured to execute `pip install` first.
+### 2. Configure Environment Variables
 
-### 5. Run the bot
+Set the following variables (or use `.env` / Replit Secrets):
 
-Click **Run** in Replit, or execute:
+| Variable | Required | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Yes | Token from [@BotFather](https://t.me/BotFather) |
+| `PROXY_URL` | Optional | Proxy string (e.g., `http://user:pass@host:port`) |
+| `HEADLESS` | Optional | `true` (default) or `false` for visible browser |
+| `SAVE_SESSION_PROFILE` | Optional | `true` (default) to persist Chrome cookies |
+
+### 3. Start the Bot
 
 ```bash
 python main.py
 ```
 
-The bot will start polling for Telegram updates.
-
 ---
 
-## Usage
+## Technical Notice & Disclaimer
 
-| Command | Description |
-|---|---|
-| `/start` | Show welcome message and command list |
-| `/login` | Enter Gmail email and password (two-step conversation) |
-| `/check_offer` | Simulate device, log in, and search for the Gemini Pro offer |
-| `/get_link` | Retrieve the last captured offer link |
-| `/status` | View current session info and device profile |
-
-### Typical flow
-
-```
-You: /start
-Bot: Welcome…
-
-You: /login
-Bot: Please enter your Gmail address:
-
-You: user@gmail.com
-Bot: Email received. Now enter your password:
-
-You: ••••••••
-Bot: ✅ Credentials saved. New Pixel 10 Pro device profile created…
-
-You: /check_offer
-Bot: ⏳ Launching device simulator…
-Bot: 🎉 Gemini Pro Offer Found! 🔗 https://one.google.com/…
-```
-
----
-
-## Technical Notes
-
-- **Headless Chrome** is used via Selenium with mobile emulation matching
-  the Pixel 10 Pro screen dimensions (390 × 844, pixel ratio 3.0).
-- A new **IMEI**, **Android ID**, and **Chrome version patch** are generated
-  for every session using the `device_simulator.py` module.
-- The **user agent** keeps the Pixel 10 Pro identity constant while varying
-  the Chrome patch version and Android ID to reduce fingerprinting.
-- Credentials are stored **in memory only** and never written to disk.
-  The Telegram message containing the password is deleted immediately after
-  being read.
-
----
-
-## Requirements
-
-- Python 3.10+
-- Google Chrome / Chromium installed (Replit provides this)
-- `chromedriver` on PATH (managed automatically by `webdriver-manager`)
-
----
-
-## Disclaimer
-
-This project is provided for educational and personal use only.
-Automating Google account access may violate Google's Terms of Service.
-Use responsibly and only with accounts you own.
+- **Play Integrity / Hardware Attestation**:
+  Google One's official 12-month promotional trials (bundled with Pixel purchases) are gated by Google Play Services and require cryptographic hardware attestation (Titan M2 Key Attestation) tied to legitimate device purchase records. Browser-level emulation (even with CDP hints) cannot forge Titan M2 hardware keys.
+- **Account Security**:
+  Automating Google account authentication may trigger security challenges or temporary account lockouts. Use test accounts and never share sensitive personal credentials. This project is intended for educational research into browser anti-detection and device emulation.

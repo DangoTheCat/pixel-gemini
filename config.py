@@ -3,6 +3,7 @@ Configuration and constants for the Pixel 10 Pro Google One Gemini Bot.
 """
 
 import os
+from pathlib import Path
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -13,19 +14,18 @@ DEVICE_BRAND = "google"
 DEVICE_MANUFACTURER = "Google"
 ANDROID_VERSION = "16"
 ANDROID_SDK = "36"
-BUILD_ID = "AP4A.250405.002"
-CHROME_VERSION = "124.0.6367.82"
-CHROME_MAJOR_VERSION = 124
+BUILD_ID = "AP3A.250905.001"  # Production build ID (user/release-keys)
+CHROME_MAJOR_VERSION = 138
+CHROME_VERSION = "138.0.7204.100"
 
-# Pool of realistic Pixel 10 Pro user-agent strings.
-# The actual UA is assembled dynamically in device_simulator.py by
-# substituting the per-session Chrome version patch suffix.
+# Viewport dimensions matching Google Pixel 10 Pro display (427x952 @ 3.0 DPR)
+VIEWPORT_WIDTH = 427
+VIEWPORT_HEIGHT = 952
+PIXEL_RATIO = 3.0
+
+# Pool of realistic Pixel 10 Pro mobile Chrome user-agent templates.
+# (Embedded WebView templates with '; wv' removed to prevent Google 'Insecure app' triggers)
 USER_AGENT_TEMPLATES = [
-    (
-        "Mozilla/5.0 (Linux; Android {android}; {model} Build/{build}; wv) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Version/4.0 Chrome/{chrome} Mobile Safari/537.36"
-    ),
     (
         "Mozilla/5.0 (Linux; Android {android}; {model} Build/{build}) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -34,16 +34,20 @@ USER_AGENT_TEMPLATES = [
 ]
 
 # ── Google URLs ───────────────────────────────────────────────────────────────
-GMAIL_LOGIN_URL = "https://accounts.google.com/signin/v2/identifier"
+GMAIL_LOGIN_URL = "https://accounts.google.com/"
 GOOGLE_ONE_URL = "https://one.google.com/"
-GOOGLE_ONE_OFFERS_URL = "https://one.google.com/about/plans"
+GOOGLE_ONE_OFFERS_URL = "https://one.google.com/offers"
+GOOGLE_ONE_BENEFITS_URL = "https://one.google.com/benefits"
+GOOGLE_ONE_GEMINI_URL = "https://one.google.com/explore-plan/gemini-advanced"
 
 # ── Gemini offer detection keywords ──────────────────────────────────────────
 GEMINI_OFFER_KEYWORDS = [
     "gemini pro",
     "gemini advanced",
+    "google ai pro",
     "12 month",
     "12-month",
+    "1 year",
     "free trial",
     "activate",
     "get started",
@@ -55,13 +59,23 @@ GEMINI_OFFER_KEYWORDS = [
 WEBDRIVER_TIMEOUT = 30          # seconds – explicit wait
 IMPLICIT_WAIT = 10              # seconds
 PAGE_LOAD_TIMEOUT = 60          # seconds
-HEADLESS = True                 # always headless on Replit
+HEADLESS = os.environ.get("HEADLESS", "true").lower() == "true"
 
-# ── Session storage ───────────────────────────────────────────────────────────
+# ── Network & Proxy (Helps mitigate datacenter IP detection) ───────────────────
+PROXY_URL = os.environ.get("PROXY_URL", "")
+
+# ── Persistent Profiles / Session storage ─────────────────────────────────────
+# Allows caching Chrome cookies to avoid repeated Google login prompts
+BASE_DIR = Path(__file__).resolve().parent
+CHROME_PROFILES_DIR = os.environ.get(
+    "CHROME_PROFILES_DIR", str(BASE_DIR / "chrome_profiles")
+)
+SAVE_SESSION_PROFILE = os.environ.get("SAVE_SESSION_PROFILE", "true").lower() == "true"
+
 # In-memory dict keyed by Telegram chat_id.
-# Values: {"email": ..., "password": ..., "device": <DeviceProfile>, "offer_link": ...}
+# Values: {"email": ..., "password": ..., "totp_secret": ..., "device": <DeviceProfile>, "offer_link": ...}
 SESSION_STORE: dict = {}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOG_LEVEL = "INFO"
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

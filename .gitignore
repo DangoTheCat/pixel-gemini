@@ -7,3 +7,6 @@ dist/
 build/
 .venv/
 venv/
+chrome_profiles/
+debug_*.png
+*.log

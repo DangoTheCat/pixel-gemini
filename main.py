@@ -2,16 +2,19 @@
 Telegram Bot entry point for the Pixel 10 Pro Google One Gemini Bot.
 
 Commands:
-  /start        – Show welcome message and available commands
-  /login        – Begin credential capture flow (email → password)
-  /check_offer  – Run Google One automation and look for Gemini Pro offer
-  /get_link     – Show the last captured offer link
-  /status       – Show current session status and device profile
+  /start         – Show welcome message and available commands
+  /login         – Begin credential flow (Email → Password → Optional 2FA Secret)
+  /check_offer   – Run Google One automation with CDP stealth and look for offers
+  /get_link      – Show the last captured offer link
+  /status        – Show current session status and simulated device profile
+  /clear_session – Reset credentials and active session
 """
 
 import logging
 import os
+import shutil
 import sys
+from typing import Optional
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -32,7 +35,7 @@ logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 # ── Conversation states ───────────────────────────────────────────────────────
-AWAIT_EMAIL, AWAIT_PASSWORD = range(2)
+AWAIT_EMAIL, AWAIT_PASSWORD, AWAIT_TOTP = range(3)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -47,19 +50,21 @@ def _get_session(chat_id: int) -> dict:
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send welcome message with command menu."""
+    """Send welcome message with command menu and disclaimer."""
     await update.message.reply_text(
         "🤖 *Pixel 10 Pro Google One Bot*\n\n"
-        "This bot simulates a Google Pixel 10 Pro (Android 16) device, "
-        "logs into your Google account, and retrieves the *12-month free "
-        "Gemini Pro* offer link from Google One.\n\n"
+        "This bot simulates a Google Pixel 10 Pro (Android 16) device with "
+        "CDP Client Hints, attempts Google account login (with 2FA TOTP support), "
+        "and checks Google One for Gemini promotional offers.\n\n"
         "📋 *Available Commands:*\n"
-        "• /login – Enter your Gmail credentials\n"
-        "• /check\\_offer – Detect the Gemini Pro offer\n"
+        "• /login – Enter your Gmail credentials & optional 2FA key\n"
+        "• /check\\_offer – Run automation and search for Gemini offer\n"
         "• /get\\_link – Show the last captured offer link\n"
-        "• /status – View current session & device info\n\n"
-        "⚠️ *Privacy Note:* Credentials are held in memory only for the "
-        "duration of the session and never stored persistently.",
+        "• /status – View current session & device info\n"
+        "• /clear\\_session – Reset saved session & device profile\n\n"
+        "⚠️ *Technical Notice:* Hardware-bundled Google One promos normally require "
+        "physical device attestation (Titan M2 Key Attestation via Play Services). "
+        "This tool is provided for educational research into browser emulation & Client Hints.",
         parse_mode="Markdown",
     )
 
@@ -70,8 +75,10 @@ async def login_start(update: Update,
                       context: ContextTypes.DEFAULT_TYPE) -> int:
     """Begin the login conversation – ask for email."""
     await update.message.reply_text(
-        "📧 Please enter your Gmail address:",
+        "📧 Please enter your Gmail address:\n"
+        "_(Send /cancel anytime to abort)_",
         reply_markup=ReplyKeyboardRemove(),
+        parse_mode="Markdown",
     )
     return AWAIT_EMAIL
 
@@ -90,31 +97,70 @@ async def login_email(update: Update,
 
 async def login_password(update: Update,
                          context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Store credentials, generate a new device profile, and finish."""
-    chat_id = update.effective_chat.id
+    """Store password, delete user's password message, and ask for optional 2FA secret."""
     password = update.message.text.strip()
-    email = context.user_data.pop("pending_email", "")
+    context.user_data["pending_password"] = password
 
-    session = _get_session(chat_id)
-    session["email"] = email
-    session["password"] = password
-    session["device"] = create_device_profile()
-    session["offer_link"] = None
-
-    # Delete the message containing the password for security
+    # Delete the message containing the plaintext password for security
     try:
         await update.message.delete()
     except Exception:
         pass
 
+    # Ask for 2FA TOTP secret key
+    reply_keyboard = [["/skip"]]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+    await update.message.reply_text(
+        "🔑 *Two-Factor Authentication (Optional):*\n\n"
+        "If your Google account has 2-Step Verification (Google Authenticator) enabled, "
+        "enter your 16/32-character TOTP Secret Key so the bot can generate 2FA codes automatically.\n\n"
+        "If your account does not use 2FA or you prefer to approve on your phone, click /skip:",
+        reply_markup=markup,
+        parse_mode="Markdown",
+    )
+    return AWAIT_TOTP
+
+
+async def login_totp(update: Update,
+                     context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Save credentials, generate new device profile, and conclude login flow."""
+    chat_id = update.effective_chat.id
+    totp_text = update.message.text.strip()
+
+    totp_secret = ""
+    if totp_text != "/skip":
+        totp_secret = totp_text
+
+    email = context.user_data.pop("pending_email", "")
+    password = context.user_data.pop("pending_password", "")
+
+    # Delete message if it contained a secret key
+    if totp_secret:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    session = _get_session(chat_id)
+    session["email"] = email
+    session["password"] = password
+    session["totp_secret"] = totp_secret
+    session["device"] = create_device_profile()
+    session["offer_link"] = None
+
+    totp_status = "Configured (Auto-OTP enabled)" if totp_secret else "None (Manual / Prompt)"
+
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            "✅ *Credentials saved* and a new Pixel 10 Pro device profile has "
-            "been created for this session.\n\n"
+            "✅ *Credentials saved* and a new Pixel 10 Pro profile has been generated!\n\n"
+            f"• Account: `{email}`\n"
+            f"• 2FA Handler: {totp_status}\n\n"
             + session["device"].summary()
-            + "\n\nUse /check\\_offer to search for the Gemini Pro offer."
+            + "\n\nUse /check\\_offer to search for Google One offers."
         ),
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown",
     )
     return ConversationHandler.END
@@ -124,6 +170,7 @@ async def login_cancel(update: Update,
                        context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancel the login conversation."""
     context.user_data.pop("pending_email", None)
+    context.user_data.pop("pending_password", None)
     await update.message.reply_text(
         "❌ Login cancelled.",
         reply_markup=ReplyKeyboardRemove(),
@@ -151,8 +198,8 @@ async def check_offer(update: Update,
         session["device"] = device
 
     await update.message.reply_text(
-        "⏳ Launching Pixel 10 Pro device simulator and logging in…\n"
-        "This may take up to 60 seconds."
+        "⏳ Launching Pixel 10 Pro simulation with CDP Client Hints…\n"
+        "Navigating to Google One and checking offers (may take 30–60s)."
     )
 
     try:
@@ -160,32 +207,33 @@ async def check_offer(update: Update,
             session["email"],
             session["password"],
             device,
+            totp_secret=session.get("totp_secret", ""),
         )
     except GoogleAutomationError as exc:
-        await update.message.reply_text(f"❌ *Error:* {exc}", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"❌ *Google Automation Block:* {exc}",
+            parse_mode="Markdown",
+        )
         return
     except Exception as exc:
         logger.exception("Unexpected error in check_offer for chat %s", chat_id)
-        await update.message.reply_text(
-            f"❌ An unexpected error occurred: {exc}"
-        )
+        await update.message.reply_text(f"❌ An unexpected error occurred: {exc}")
         return
 
     if offer_link:
         session["offer_link"] = offer_link
         await update.message.reply_text(
-            "🎉 *Gemini Pro Offer Found!*\n\n"
-            "Click the link below to activate your 12-month free Gemini Pro:\n\n"
+            "🎉 *Gemini / Google One Offer Found!*\n\n"
+            "Claim your promotional link below:\n\n"
             f"🔗 {offer_link}\n\n"
             "_Use /get\\_link to retrieve this link again._",
             parse_mode="Markdown",
         )
     else:
         await update.message.reply_text(
-            "😔 No active Gemini Pro offer was detected on your Google One "
-            "account at this time.\n\n"
-            "The offer may not be available for your account region or may "
-            "have already been activated. Try again later."
+            "ℹ️ No active free trial or device offer was detected for this account.\n\n"
+            "Note: Google validates hardware-linked 12-month offers using Play Integrity "
+            "and device IMEI records registered upon purchase."
         )
 
 
@@ -206,7 +254,7 @@ async def get_link(update: Update,
     else:
         await update.message.reply_text(
             "ℹ️ No offer link has been captured yet. "
-            "Use /check\\_offer to search for the Gemini Pro offer.",
+            "Use /check\\_offer to search for available offers.",
             parse_mode="Markdown",
         )
 
@@ -227,6 +275,7 @@ async def status(update: Update,
 
     email = session.get("email", "—")
     has_creds = bool(session.get("email") and session.get("password"))
+    has_totp = bool(session.get("totp_secret"))
     offer_link = session.get("offer_link")
     device = session.get("device")
 
@@ -234,6 +283,7 @@ async def status(update: Update,
         "📊 *Session Status*\n",
         f"Account: `{email}`",
         f"Credentials loaded: {'✅' if has_creds else '❌'}",
+        f"2FA Secret set: {'✅' if has_totp else '❌ (Phone Prompt)'}",
         f"Offer link captured: {'✅' if offer_link else '❌'}",
     ]
 
@@ -246,6 +296,28 @@ async def status(update: Update,
     )
 
 
+# ── /clear_session ────────────────────────────────────────────────────────────
+
+async def clear_session(update: Update,
+                        context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear session data and cached Chrome profile for this chat."""
+    chat_id = update.effective_chat.id
+    session = config.SESSION_STORE.pop(chat_id, {})
+    email = session.get("email")
+
+    if email and config.SAVE_SESSION_PROFILE:
+        import re
+        clean_email = re.sub(r"[^a-zA-Z0-9]", "_", email)
+        profile_path = os.path.join(config.CHROME_PROFILES_DIR, f"profile_{clean_email}")
+        if os.path.exists(profile_path):
+            try:
+                shutil.rmtree(profile_path)
+            except Exception as exc:
+                logger.warning("Could not delete profile %s: %s", profile_path, exc)
+
+    await update.message.reply_text("🧹 Session cleared. All stored credentials and profiles were removed.")
+
+
 # ── Application setup ─────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -253,13 +325,13 @@ def main() -> None:
     if not token:
         logger.error(
             "TELEGRAM_BOT_TOKEN environment variable is not set. "
-            "Set it in Replit Secrets and restart."
+            "Set it in your environment or secrets and restart."
         )
         sys.exit(1)
 
     app = Application.builder().token(token).build()
 
-    # /login conversation
+    # /login conversation handler with 2FA TOTP support
     login_conv = ConversationHandler(
         entry_points=[CommandHandler("login", login_start)],
         states={
@@ -268,6 +340,10 @@ def main() -> None:
             ],
             AWAIT_PASSWORD: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, login_password)
+            ],
+            AWAIT_TOTP: [
+                CommandHandler("skip", login_totp),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, login_totp),
             ],
         },
         fallbacks=[CommandHandler("cancel", login_cancel)],
@@ -278,6 +354,7 @@ def main() -> None:
     app.add_handler(CommandHandler("check_offer", check_offer))
     app.add_handler(CommandHandler("get_link", get_link))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("clear_session", clear_session))
 
     logger.info("Bot is running. Press Ctrl-C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
