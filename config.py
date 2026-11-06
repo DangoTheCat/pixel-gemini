@@ -8,22 +8,31 @@ from pathlib import Path
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
-# ── Device specs – Google Pixel 10 Pro (Android 16) ──────────────────────────
-DEVICE_MODEL = "Pixel 10 Pro"
+# ── Device specs – Google Pixel (Pixel 9 Pro / Pixel 10 Pro) ─────────────────
+DEVICE_MODEL = os.environ.get("DEVICE_MODEL", "Pixel 9 Pro")
 DEVICE_BRAND = "google"
 DEVICE_MANUFACTURER = "Google"
-ANDROID_VERSION = "16"
-ANDROID_SDK = "36"
-BUILD_ID = "AP3A.250905.001"  # Production build ID (user/release-keys)
+
+if "10" in DEVICE_MODEL:
+    ANDROID_VERSION = os.environ.get("ANDROID_VERSION", "16")
+    ANDROID_SDK = os.environ.get("ANDROID_SDK", "36")
+    BUILD_ID = os.environ.get("BUILD_ID", "AP3A.250905.001")
+    VIEWPORT_WIDTH = 427
+    VIEWPORT_HEIGHT = 952
+    PIXEL_RATIO = 3.0
+else:
+    # Pixel 9 Pro specs (official Google hardware with active 1-year Gemini promo)
+    ANDROID_VERSION = os.environ.get("ANDROID_VERSION", "15")
+    ANDROID_SDK = os.environ.get("ANDROID_SDK", "35")
+    BUILD_ID = os.environ.get("BUILD_ID", "AP4A.241205.013")
+    VIEWPORT_WIDTH = 412
+    VIEWPORT_HEIGHT = 923
+    PIXEL_RATIO = 3.0
+
 CHROME_MAJOR_VERSION = 138
 CHROME_VERSION = "138.0.7204.100"
 
-# Viewport dimensions matching Google Pixel 10 Pro display (427x952 @ 3.0 DPR)
-VIEWPORT_WIDTH = 427
-VIEWPORT_HEIGHT = 952
-PIXEL_RATIO = 3.0
-
-# Pool of realistic Pixel 10 Pro mobile Chrome user-agent templates.
+# Pool of realistic Pixel mobile Chrome user-agent templates.
 # (Embedded WebView templates with '; wv' removed to prevent Google 'Insecure app' triggers)
 USER_AGENT_TEMPLATES = [
     (
@@ -39,6 +48,7 @@ GOOGLE_ONE_URL = "https://one.google.com/"
 GOOGLE_ONE_OFFERS_URL = "https://one.google.com/offers"
 GOOGLE_ONE_BENEFITS_URL = "https://one.google.com/benefits"
 GOOGLE_ONE_GEMINI_URL = "https://one.google.com/explore-plan/gemini-advanced"
+GOOGLE_ONE_AI_URL = "https://one.google.com/ai"
 
 # ── Gemini offer detection keywords ──────────────────────────────────────────
 GEMINI_OFFER_KEYWORDS = [
@@ -53,6 +63,33 @@ GEMINI_OFFER_KEYWORDS = [
     "get started",
     "claim offer",
     "redeem",
+    "partner-eft-onboard",
+    "nhận ưu đãi",
+    "đổi ưu đãi",
+    "ưu đãi",
+    "kích hoạt",
+    "dùng thử",
+    "12 tháng",
+    "1 năm",
+    "nhận ngay",
+]
+
+# Action keywords specifically for clicking offer redemption CTA buttons / cards
+OFFER_CTA_KEYWORDS = [
+    "claim offer",
+    "claim",
+    "redeem offer",
+    "redeem",
+    "get offer",
+    "get perk",
+    "get benefit",
+    "activate offer",
+    "claim benefit",
+    "nhận ưu đãi",
+    "đổi ưu đãi",
+    "nhận quà",
+    "nhận ngay",
+    "kích hoạt ưu đãi",
 ]
 
 # ── Selenium / WebDriver ──────────────────────────────────────────────────────

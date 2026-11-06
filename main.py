@@ -225,16 +225,18 @@ async def check_offer(update: Update,
         session["offer_link"] = offer_link
         await update.message.reply_text(
             "🎉 <b>Gemini / Google One Offer Found!</b>\n\n"
-            "Claim your promotional link below:\n\n"
-            f"🔗 {html.escape(offer_link)}\n\n"
+            f"Link ưu đãi: {html.escape(offer_link)}\n\n"
             "<i>Use /get_link to retrieve this link again.</i>",
             parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
-            "ℹ️ No active free trial or device offer was detected for this account.\n\n"
-            "Note: Google validates hardware-linked 12-month offers using Play Integrity "
-            "and device IMEI records registered upon purchase."
+            "ℹ️ <b>Không tìm thấy link ưu đãi hợp lệ cho tài khoản này.</b>\n\n"
+            "Bot chỉ trích xuất các link ưu đãi thực sự có mã kích hoạt "
+            "(dạng <code>https://one.google.com/partner-eft-onboard/...</code>).\n\n"
+            "<i>Lưu ý:</i> Ưu đãi phần cứng Google One / Gemini 12 tháng yêu cầu "
+            "tài khoản và thiết bị thỏa mãn điều kiện khuyến mãi (Pixel Offer / Play Integrity).",
+            parse_mode="HTML",
         )
 
 
@@ -249,13 +251,14 @@ async def get_link(update: Update,
 
     if link:
         await update.message.reply_text(
-            f"🔗 <b>Last captured offer link:</b>\n\n{html.escape(link)}",
+            f"🔗 Link ưu đãi: {html.escape(link)}",
             parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
-            "ℹ️ No offer link has been captured yet. "
-            "Use /check_offer to search for available offers."
+            "ℹ️ Chưa có link ưu đãi nào được ghi nhận. "
+            "Dùng /check_offer để kiểm tra ưu đãi.",
+            parse_mode="HTML",
         )
 
 

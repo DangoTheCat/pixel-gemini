@@ -93,6 +93,7 @@ def _build_driver(profile: DeviceProfile, email: str = "") -> webdriver.Chrome:
     options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
     # Use Chromium binary if available on Linux
     chromium_bin = shutil.which("chromium") or shutil.which("chromium-browser")
@@ -365,68 +366,204 @@ def _gmail_login(driver: webdriver.Chrome, email: str, password: str,
 
 # ── Offer detection ───────────────────────────────────────────────────────────
 
-def _extract_payment_link(driver: webdriver.Chrome) -> Optional[str]:
-    """
-    Scan page DOM and raw HTML for a Gemini / Google One offer link.
-    """
-    # Pattern 1: Direct Google One offer link
-    offer_regex = re.compile(
-        r'https?://one\.google\.com/offer/([A-Za-z0-9_-]+)',
-        re.IGNORECASE,
-    )
-    matches = offer_regex.findall(driver.page_source)
-    for code in matches:
-        if (
-            code.lower() not in {"freetrial", "free-trial", "trial", "upgrade", "plans", "about", "home", "benefits"}
-            and len(code) > 5
-        ):
-            found = f"https://one.google.com/offer/{code}"
-            logger.info("Found unique offer link via regex: %s", found)
-            return found
+INVALID_OFFER_TOKENS = {
+    "freetrial", "free-trial", "trial", "upgrade", "plans", "about",
+    "home", "benefits", "offers", "ai", "settings", "storage",
+    "explore-plan", "explore", "signup", "signin", "support", "faq"
+}
 
-    # Pattern 2: Anchor tags matching promotional keywords
-    keywords = config.GEMINI_OFFER_KEYWORDS
-    all_links = driver.find_elements(By.TAG_NAME, "a")
-    for link in all_links:
-        try:
-            text = (link.text + " " + (link.get_attribute("aria-label") or "")).lower()
-            href = link.get_attribute("href") or ""
-            if any(kw in text for kw in keywords) and href and "one.google.com" in href:
-                logger.info("Found offer link via text match: %s", href)
-                return href
-        except Exception:
-            continue
 
-    # Pattern 3: Interactive CTA buttons
-    buttons = driver.find_elements(By.CSS_SELECTOR, "button, [role='button']")
-    for btn in buttons:
-        try:
-            text = btn.text.lower()
-            if any(kw in text for kw in keywords):
-                try:
-                    parent_link = btn.find_element(By.XPATH, "ancestor::a")
-                    href = parent_link.get_attribute("href") or ""
-                    if href:
-                        return href
-                except NoSuchElementException:
-                    pass
-                if "one.google.com" in driver.current_url:
-                    return driver.current_url
-        except Exception:
-            continue
+def extract_valid_offer_link(raw_text: str) -> Optional[str]:
+    """
+    Examine a URL, relative path, or HTML snippet and extract a verified
+    promotional offer link containing a unique redemption token.
+
+    Valid real offers follow formats like:
+      - https://one.google.com/partner-eft-onboard/<TOKEN> (e.g. partner-eft-onboard/8PC8FMLML6DC3QEV9APW)
+      - https://one.google.com/offer/<TOKEN>
+      - https://one.google.com/promo/<TOKEN>
+    where TOKEN is a unique redemption hash.
+
+    Generic landing pages like 'https://one.google.com/ai?hl=en-IN' or
+    '/explore-plan/gemini-advanced' are explicitly rejected.
+    """
+    if not raw_text:
+        return None
+
+    # Unescape escaped slashes commonly found in JSON / JS page source
+    cleaned = raw_text.replace(r"\/", "/")
+
+    # 1. Partner EFT onboarding link (matches real Google One hardware promos)
+    m_eft = re.search(r"partner-eft-onboard/([A-Za-z0-9_-]{8,})", cleaned, re.IGNORECASE)
+    if m_eft:
+        token = m_eft.group(1)
+        if token.lower() not in INVALID_OFFER_TOKENS:
+            return f"https://one.google.com/partner-eft-onboard/{token}"
+
+    # 2. Unique offer/promo/redeem token link
+    m_offer = re.search(r"(?:offer|promo|promotion|redeem)/([A-Za-z0-9_-]{8,})", cleaned, re.IGNORECASE)
+    if m_offer:
+        token = m_offer.group(1)
+        if token.lower() not in INVALID_OFFER_TOKENS:
+            return f"https://one.google.com/offer/{token}"
+
+    # 3. Query parameter containing promo token on one.google.com
+    m_param = re.search(r"[?&](?:token|promo_code|offer_id)=([A-Za-z0-9_-]{8,})", cleaned, re.IGNORECASE)
+    if m_param and "one.google.com" in cleaned:
+        token = m_param.group(1)
+        if token.lower() not in INVALID_OFFER_TOKENS:
+            return f"https://one.google.com/partner-eft-onboard/{token}"
 
     return None
+
+
+def _extract_offer_link(driver: webdriver.Chrome) -> Optional[str]:
+    """
+    Scan the current browser state for a verified Google One / Gemini offer link.
+    Checks:
+      1. Current active URL
+      2. All open window handles / tabs
+      3. Raw page HTML and JSON script blobs
+      4. DOM anchor elements (href, data-href, data-url)
+      5. Network performance logs for background redirect/onboarding API calls
+      6. Interactive offer CTA buttons/cards (clicks to trigger navigation if present)
+    """
+    # ── 1. Check current URL ──────────────────────────────────────────────────
+    found = extract_valid_offer_link(driver.current_url)
+    if found:
+        logger.info("Found verified offer link in active browser URL: %s", found)
+        return found
+
+    # ── 2. Check all open tabs / windows ──────────────────────────────────────
+    main_handle = driver.current_window_handle
+    for handle in driver.window_handles:
+        if handle != main_handle:
+            try:
+                driver.switch_to.window(handle)
+                found = extract_valid_offer_link(driver.current_url)
+                if found:
+                    logger.info("Found verified offer link in secondary tab: %s", found)
+                    return found
+            except Exception:
+                continue
+    driver.switch_to.window(main_handle)
+
+    # ── 3. Page source regex scan ─────────────────────────────────────────────
+    try:
+        page_source = driver.page_source or ""
+        found = extract_valid_offer_link(page_source)
+        if found:
+            logger.info("Found verified offer link in page DOM/source: %s", found)
+            return found
+    except Exception as exc:
+        logger.debug("Error reading page_source: %s", exc)
+
+    # ── 4. DOM Anchor elements ────────────────────────────────────────────────
+    try:
+        all_links = driver.find_elements(By.TAG_NAME, "a")
+        for link in all_links:
+            try:
+                for attr in ("href", "data-href", "data-url"):
+                    val = link.get_attribute(attr)
+                    if val:
+                        found = extract_valid_offer_link(val)
+                        if found:
+                            logger.info("Found verified offer link in anchor tag (%s): %s", attr, found)
+                            return found
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.debug("Error scanning anchor tags: %s", exc)
+
+    # ── 5. Chrome performance / network logs ──────────────────────────────────
+    try:
+        logs = driver.get_log("performance")
+        for entry in logs:
+            msg = entry.get("message", "")
+            if "partner-eft-onboard" in msg or "offer/" in msg:
+                found = extract_valid_offer_link(msg)
+                if found:
+                    logger.info("Found verified offer link in performance network log: %s", found)
+                    return found
+    except Exception:
+        pass
+
+    # ── 6. Interactive CTA Button triggers ────────────────────────────────────
+    # If the offer is displayed inside an offer card with a "Claim" / "Redeem" button
+    # that requires interaction to trigger onboarding URL generation:
+    try:
+        cta_keywords = config.OFFER_CTA_KEYWORDS
+        buttons = driver.find_elements(By.CSS_SELECTOR, "button, [role='button'], a.button, c-wiz button")
+        for btn in buttons:
+            try:
+                btn_text = (btn.text or "").strip().lower()
+                aria_label = (btn.get_attribute("aria-label") or "").strip().lower()
+                combined = f"{btn_text} {aria_label}"
+                if any(kw in combined for kw in cta_keywords):
+                    logger.info("Attempting to click offer CTA button: '%s'", btn_text or aria_label)
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn)
+                    time.sleep(1)
+                    try:
+                        btn.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", btn)
+                    time.sleep(3)
+
+                    # Re-check URL after clicking
+                    found = extract_valid_offer_link(driver.current_url)
+                    if found:
+                        logger.info("Navigated to verified offer link after click: %s", found)
+                        return found
+
+                    # Re-check open tabs
+                    for handle in driver.window_handles:
+                        driver.switch_to.window(handle)
+                        found = extract_valid_offer_link(driver.current_url)
+                        if found:
+                            logger.info("Found verified offer link in newly opened tab: %s", found)
+                            return found
+                    driver.switch_to.window(main_handle)
+
+                    # Re-check page source
+                    found = extract_valid_offer_link(driver.page_source or "")
+                    if found:
+                        logger.info("Found verified offer link in updated page source: %s", found)
+                        return found
+
+                    # Re-check network logs
+                    try:
+                        logs = driver.get_log("performance")
+                        for entry in logs:
+                            msg = entry.get("message", "")
+                            if "partner-eft-onboard" in msg or "offer/" in msg:
+                                found = extract_valid_offer_link(msg)
+                                if found:
+                                    logger.info("Found verified offer link in post-click network logs: %s", found)
+                                    return found
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.debug("Error while inspecting CTA buttons: %s", exc)
+
+    return None
+
+
+_extract_payment_link = _extract_offer_link  # Backward compatibility alias
 
 
 def _navigate_google_one(driver: webdriver.Chrome) -> Optional[str]:
     """
     Navigate through Google One plans and benefits pages to find promotional offers.
+    Prioritizes offers and benefits pages where device promo cards are presented.
     """
     urls_to_check = [
-        config.GOOGLE_ONE_GEMINI_URL,
-        config.GOOGLE_ONE_BENEFITS_URL,
-        config.GOOGLE_ONE_OFFERS_URL,
-        config.GOOGLE_ONE_URL,
+        config.GOOGLE_ONE_OFFERS_URL,     # https://one.google.com/offers
+        config.GOOGLE_ONE_BENEFITS_URL,   # https://one.google.com/benefits
+        config.GOOGLE_ONE_URL,            # https://one.google.com/
+        config.GOOGLE_ONE_GEMINI_URL,     # https://one.google.com/explore-plan/gemini-advanced
+        config.GOOGLE_ONE_AI_URL,         # https://one.google.com/ai
     ]
 
     for url in urls_to_check:
@@ -440,6 +577,8 @@ def _navigate_google_one(driver: webdriver.Chrome) -> Optional[str]:
                 '[aria-label="Accept all"]',
                 'button[jsname="higCR"]',
                 '[data-action="accept"]',
+                'button[aria-label*="Accept"]',
+                'button[aria-label*="Đồng ý"]',
             ):
                 try:
                     btn = driver.find_element(By.CSS_SELECTOR, selector)
@@ -449,13 +588,18 @@ def _navigate_google_one(driver: webdriver.Chrome) -> Optional[str]:
                 except NoSuchElementException:
                     pass
 
+            # Fast check
+            link = _extract_offer_link(driver)
+            if link:
+                return link
+
             # Scroll dynamically to trigger SPA lazy loading of cards
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
             time.sleep(1.5)
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1.5)
 
-            link = _extract_payment_link(driver)
+            link = _extract_offer_link(driver)
             if link:
                 return link
 

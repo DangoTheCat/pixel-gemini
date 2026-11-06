@@ -29,9 +29,10 @@ def _luhn_checksum(number: str) -> int:
 
 
 def _generate_imei() -> str:
-    """Generate a syntactically valid IMEI (15 digits, Luhn-valid) with a Google TAC."""
-    # Common TAC prefix for Google Pixel hardware
-    tac = "35" + "".join(secrets.choice(string.digits) for _ in range(6))
+    """Generate a syntactically valid IMEI (15 digits, Luhn-valid) with an authentic Google Pixel TAC."""
+    # Real TAC prefixes for Google Pixel devices (Pixel 9 Pro / Pixel 9 / Pixel 8 series)
+    pixel_tacs = ["35722835", "35722836", "35288032", "35456331", "35678430"]
+    tac = secrets.choice(pixel_tacs)
     serial = "".join(secrets.choice(string.digits) for _ in range(6))
     partial = tac + serial
     check_digit = (10 - _luhn_checksum(partial + "0")) % 10
