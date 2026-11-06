@@ -99,7 +99,8 @@ def _build_driver(profile: DeviceProfile, email: str = "") -> webdriver.Chrome:
     if chromium_bin:
         options.binary_location = chromium_bin
 
-    service = Service()
+    chromedriver_bin = shutil.which("chromedriver")
+    service = Service(executable_path=chromedriver_bin) if chromedriver_bin else Service()
     driver = webdriver.Chrome(service=service, options=options)
 
     # ── 1. Emulate real Pixel 10 Pro via CDP User-Agent Client Hints ──────────

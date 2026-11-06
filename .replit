@@ -1,0 +1,8 @@
+run = "python main.py"
+entrypoint = "main.py"
+
+[nix]
+channel = "stable-24_05"
+
+[gitHubImport]
+requiredFiles = [".replit", "replit.nix"]
